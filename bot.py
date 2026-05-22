@@ -2453,6 +2453,7 @@ def technadzor_reports_keyboard():
         [KeyboardButton("📋 Отчет Ремонт")],
         [KeyboardButton("⛽ Отчет Дизел")],
         [KeyboardButton("🟢 Отчет Газ")],
+        [KeyboardButton("🧪 Backup test")],
         [KeyboardButton("⬅️ Орқага")],
     ], resize_keyboard=True)
 
@@ -2470,6 +2471,7 @@ def technadzor_diesel_report_keyboard():
         [KeyboardButton("")],
         [KeyboardButton("📄 EXCEL файл")],
         [KeyboardButton("📚 История Дизел")],
+        [KeyboardButton("🧪 Backup test")],
         [KeyboardButton("⬅️ Орқага")],
     ], resize_keyboard=True)
 
