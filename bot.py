@@ -9071,6 +9071,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_duplicate_text_button(context, text):
         return
 
+    # === BOT3 v41: /testbackup priority fallback ===
+    # Агар CommandHandler қандайдир сабаб билан ушламаса, text flow'га тушган /testbackup ҳам ишласин.
+    if text.split()[0].lower() == "/testbackup":
+        await test_backup_command(update, context)
+        return
+
     context.user_data["inline_disabled_by_start"] = False
     mode = context.user_data.get("mode")
     current_role = get_role(update)
@@ -18075,11 +18081,11 @@ app.add_error_handler(global_error_handler)
 app.add_handler(CommandHandler("start", start, filters.ChatType.PRIVATE))
 app.add_handler(CommandHandler("clear", clear_chat, filters.ChatType.PRIVATE))
 app.add_handler(CommandHandler("id", get_id, filters.ChatType.PRIVATE))
+app.add_handler(CommandHandler("testbackup", test_backup_command))
 app.add_handler(CommandHandler("settechgroup", set_tech_group_command))
 app.add_handler(CommandHandler("setarchivegroup", set_archive_group_command))
 app.add_handler(CommandHandler("announce", announce_command))
 app.add_handler(CommandHandler("pin", pin_announcement_command))
-app.add_handler(CommandHandler("testbackup", test_backup_command))
 # BOT3 v18: edit audit — archive'даги нусхага reply қилиб белгилайди.
 app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, handle_archived_edited_message), group=-2)
 # BOT3 v17: техникалар гуруҳидаги оддий хабар/фото/видеоларни archive'га forward қилади ва меню чиқармасдан тўхтатади.
