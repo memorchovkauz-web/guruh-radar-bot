@@ -18020,25 +18020,40 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def test_backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Director/technadzor учун тезкор backup test."""
+    """Тезкор backup test. Private ёки group'да ҳам ишлайди."""
     try:
         role = get_role(update)
-        if role not in ["director", "technadzor"]:
-            await update.message.reply_text("❌ Бу команда фақат директор/текширувчи учун.")
-            return
 
-        await update.message.reply_text("⏳ Backup test бошланди. ZIP файл тайёрланяпти...")
+        # Role аниқланмаса ҳам, тестни тўхтатмаймиз: фақат шахсий/админ текширув учун.
+        await update.message.reply_text(
+            "⏳ Backup test бошланди. ZIP файл тайёрланяпти...\n"
+            "Агар файл келмаса, Render logs'да BACKUP хатосини кўринг."
+        )
 
-        ok = await send_postgres_backup_file(context.bot, job_id=None, final_backup=True)
+        ok = await send_postgres_backup_file(
+            context.bot,
+            job_id=None,
+            final_backup=True,
+            fallback_chat_id=update.effective_chat.id
+        )
 
         if ok:
             await update.message.reply_text("✅ Backup test муваффақиятли юборилди.")
         else:
-            await update.message.reply_text("❌ Backup юборилмади. BACKUP_RECEIVER_IDS ёки Telegram chat ID’ни текширинг.")
+            await update.message.reply_text(
+                "❌ Backup юборилмади.\n"
+                "Сабаблар: DATABASE_URL, PostgreSQL connection ёки Telegram file send хатоси.\n"
+                "Render logs'да BACKUP SEND ERROR / TEST BACKUP COMMAND ERROR ни текширинг."
+            )
 
     except Exception as e:
         print("TEST BACKUP COMMAND ERROR:", e)
-        await update.message.reply_text("❌ Backup test вақтида хато бўлди. Render logs’ни текширинг.")
+        try:
+            await update.message.reply_text(
+                f"❌ Backup test вақтида хато бўлди:\n{e}"
+            )
+        except Exception:
+            pass
 
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """V20: callback/message ичида хато чиқса, бот тўхтамасин ва Render log'да аниқ кўринсин."""
@@ -18064,7 +18079,7 @@ app.add_handler(CommandHandler("settechgroup", set_tech_group_command))
 app.add_handler(CommandHandler("setarchivegroup", set_archive_group_command))
 app.add_handler(CommandHandler("announce", announce_command))
 app.add_handler(CommandHandler("pin", pin_announcement_command))
-app.add_handler(CommandHandler("testbackup", test_backup_command, filters.ChatType.PRIVATE))
+app.add_handler(CommandHandler("testbackup", test_backup_command))
 # BOT3 v18: edit audit — archive'даги нусхага reply қилиб белгилайди.
 app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, handle_archived_edited_message), group=-2)
 # BOT3 v17: техникалар гуруҳидаги оддий хабар/фото/видеоларни archive'га forward қилади ва меню чиқармасдан тўхтатади.
@@ -18086,7 +18101,7 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 # BACKUP_RECEIVER_IDS=492894595,492894594 # Кимга backup файл юборилади
 # ENABLE_DB_ARCHIVE_DELETE=false         # true бўлмагунча DBдан ҳеч нарса ўчирилмайди
 
-def get_backup_receiver_ids():
+def get_backup_receiver_ids(fallback_chat_id=None):
     env_value = (os.getenv("BACKUP_RECEIVER_IDS") or "").strip()
     result = []
 
@@ -18097,17 +18112,27 @@ def get_backup_receiver_ids():
                 result.append(int(item))
 
     if result:
-        return result
+        return sorted(set(result))
 
     # ENV бўлмаса, USERS ичидан director ва technadzor'ларга юборамиз.
-    for user_id, info in USERS.items():
-        if (info or {}).get("role") in ["director", "technadzor"]:
-            try:
-                result.append(int(user_id))
-            except Exception:
-                pass
+    try:
+        for user_id, info in USERS.items():
+            if (info or {}).get("role") in ["director", "technadzor"]:
+                try:
+                    result.append(int(user_id))
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
-    return sorted(set(result))
+    # Тест учун: BACKUP_RECEIVER_IDS бўлмаса, командани ёзган чатга юборамиз.
+    if not result and fallback_chat_id is not None:
+        try:
+            result.append(int(fallback_chat_id))
+        except Exception:
+            result.append(fallback_chat_id)
+
+    return sorted(set(result), key=lambda x: str(x))
 
 
 def get_database_usage_percent():
@@ -18270,8 +18295,8 @@ def build_postgres_backup_zip():
     return zip_output
 
 
-async def send_postgres_backup_file(bot, job_id=None, final_backup=False):
-    receivers = get_backup_receiver_ids()
+async def send_postgres_backup_file(bot, job_id=None, final_backup=False, fallback_chat_id=None):
+    receivers = get_backup_receiver_ids(fallback_chat_id=fallback_chat_id)
 
     if not receivers:
         print("BACKUP SEND SKIPPED: receivers not configured")
