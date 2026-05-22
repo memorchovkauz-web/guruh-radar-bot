@@ -2378,8 +2378,18 @@ def technadzor_staff_count(work_role=None):
 
 
 def technadzor_keyboard():
-    total_notifications = pending_registration_count() + pending_repair_exit_count() + pending_diesel_prihod_count()
-    notification_text = f"🔔 Уведомления [ {total_notifications} ]" if total_notifications > 0 else "🔔 Уведомления"
+    total_notifications = (
+        pending_registration_count()
+        + pending_repair_exit_count()
+        + pending_diesel_prihod_count()
+    )
+
+    notification_text = (
+        f"🔔 Уведомления [ {total_notifications} ]"
+        if total_notifications > 0
+        else "🔔 Уведомления"
+    )
+
     staff_total = technadzor_staff_count()
 
     return ReplyKeyboardMarkup([
@@ -2418,7 +2428,6 @@ def technadzor_reports_keyboard():
         [KeyboardButton("📋 Отчет Ремонт")],
         [KeyboardButton("⛽ Отчет Дизел")],
         [KeyboardButton("🟢 Отчет Газ")],
-        [KeyboardButton("🧪 Backup test")],
         [KeyboardButton("⬅️ Орқага")],
     ], resize_keyboard=True)
 
@@ -2436,7 +2445,6 @@ def technadzor_diesel_report_keyboard():
         [KeyboardButton("")],
         [KeyboardButton("📄 EXCEL файл")],
         [KeyboardButton("📚 История Дизел")],
-        [KeyboardButton("🧪 Backup test")],
         [KeyboardButton("⬅️ Орқага")],
     ], resize_keyboard=True)
 
