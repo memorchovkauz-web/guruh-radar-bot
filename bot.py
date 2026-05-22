@@ -2422,6 +2422,7 @@ def technadzor_keyboard():
         [KeyboardButton("🔧 Ремонтга қўшиш")],
         [KeyboardButton(f"👥 Ходимлар ({staff_total} киши)")],
         [KeyboardButton("📊 Ҳисоботлар")],
+        [KeyboardButton("🧪 Backup test")],
     ], resize_keyboard=True)
 
 
@@ -9080,6 +9081,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["inline_disabled_by_start"] = False
     mode = context.user_data.get("mode")
     current_role = get_role(update)
+
+    # === BOT3 v42: Backup test button fallback ===
+    # /testbackup command ишламаса ҳам, пастки "🧪 Backup test" кнопкаси орқали тест ишлайди.
+    if text in ["🧪 Backup test", "Backup test"]:
+        await test_backup_command(update, context)
+        return
 
     # === BOT3 v35: ReplyKeyboard "🏠 Бош меню" priority fix ===
     # Дизел тасдиқдан кейин пастда фақат "🏠 Бош меню" чиқади.
