@@ -8833,7 +8833,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if role == "technadzor":
-        await update.message.reply_text("🧑‍🔍 Текширувчи менюси:", reply_markup=technadzor_keyboard())
+        await update.message.reply_text(
+            "🧑‍🔍 Текширувчи менюси: v35 TEST",
+            reply_markup=technadzor_keyboard()
+        )
         return
 
     if role == "mechanic":
