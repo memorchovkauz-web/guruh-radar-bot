@@ -42,6 +42,7 @@ from telegram.ext import (
 )
 
 from telegram.error import BadRequest
+from openpyxl import Workbook
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -669,42 +670,6 @@ CREATE TABLE IF NOT EXISTS group_archive_messages (
     created_at TIMESTAMP DEFAULT NOW(),
     edited_at TIMESTAMP,
     UNIQUE(source_chat_id, source_message_id)
-)
-""")
-
-
-
-# === BOT3 v36: SAFE POSTGRES BACKUP / ARCHIVE STRUCTURE ===
-# Маълумотлар ўчиб кетмаслиги учун:
-# 1) DB usage 10/20/30/40... босқичлардан ўтса backup навбатга қўйилади;
-# 2) backup фақат кун тугагандан кейин, эрталаб 08:00 да Excel файлга чиқарилади;
-# 3) ўчириш фақат backup файл яратилган, log'га ёзилган ва юборилганидан кейин рухсат этилади.
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS bot_backup_jobs (
-    id BIGSERIAL PRIMARY KEY,
-    backup_date DATE NOT NULL,
-    threshold_percent INTEGER NOT NULL,
-    usage_percent NUMERIC,
-    status TEXT DEFAULT 'queued',
-    file_name TEXT,
-    file_size BIGINT,
-    sent_to TEXT,
-    queued_at TIMESTAMP DEFAULT NOW(),
-    created_at TIMESTAMP,
-    sent_at TIMESTAMP,
-    error TEXT,
-    UNIQUE (backup_date, threshold_percent)
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS bot_archive_delete_log (
-    id BIGSERIAL PRIMARY KEY,
-    backup_job_id BIGINT,
-    table_name TEXT,
-    rows_deleted BIGINT DEFAULT 0,
-    deleted_until TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW()
 )
 """)
 
@@ -3911,18 +3876,6 @@ def technadzor_staff_edit_keyboard(driver_id):
 
 
 
-
-def zip_backup_file(xlsx_path):
-    """ZIP Excel backup'ni ZIP қилиб сиқади."""
-    xlsx_path = Path(xlsx_path)
-    zip_path = xlsx_path.with_suffix(".zip")
-
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        zf.write(xlsx_path, arcname=xlsx_path.name)
-
-    return zip_path
-
-
 def technadzor_pending_edit_backup_key(driver_id):
     return str(driver_id)
 
@@ -5529,7 +5482,7 @@ async def send_deeplink_media(query, context, view_type, record_id):
 
 
 # ================= V26 ZAPRAVSHIK ONLY REPORTS + STOCK FILTER =================
-# Dependency-free .zip generator: openpyxl талаб қилмайди, Render requirements бузилмайди.
+# Dependency-free .xlsx generator: openpyxl талаб қилмайди, Render requirements бузилмайди.
 def _xlsx_col_name(col_index):
     name = ""
     while col_index:
@@ -9074,21 +9027,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_duplicate_text_button(context, text):
         return
 
-    # === BOT3 v41: /testbackup priority fallback ===
-    # Агар CommandHandler қандайдир сабаб билан ушламаса, text flow'га тушган /testbackup ҳам ишласин.
-    if text.split()[0].lower() == "/testbackup":
+    # === BOT3 v44: backup test command/button priority ===
+    if text.split()[0].lower() == "/testbackup" or text in ["🧪 Backup test", "Backup test"]:
         await test_backup_command(update, context)
         return
 
     context.user_data["inline_disabled_by_start"] = False
     mode = context.user_data.get("mode")
     current_role = get_role(update)
-
-    # === BOT3 v42: Backup test button fallback ===
-    # /testbackup command ишламаса ҳам, пастки "🧪 Backup test" кнопкаси орқали тест ишлайди.
-    if text in ["🧪 Backup test", "Backup test"]:
-        await test_backup_command(update, context)
-        return
 
     # === BOT3 v35: ReplyKeyboard "🏠 Бош меню" priority fix ===
     # Дизел тасдиқдан кейин пастда фақат "🏠 Бош меню" чиқади.
@@ -9481,7 +9427,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             wait_msg = await update.message.reply_text("⏳ Excel ҳисобот тайёрланяпти...")
             try:
                 report_file = build_zapravshik_diesel_report_file()
-                filename = f"diesel_hisobot_{datetime.now(ZoneInfo('Asia/Tashkent')).strftime('%Y_%m_%d_%H_%M')}.zip"
+                filename = f"diesel_hisobot_{datetime.now(ZoneInfo('Asia/Tashkent')).strftime('%Y_%m_%d_%H_%M')}.xlsx"
                 await update.message.reply_document(
                     document=InputFile(report_file, filename=filename),
                     filename=filename,
@@ -10103,7 +10049,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 wait_msg = await update.message.reply_text("⏳ Ремонт Excel ҳисоботи тайёрланяпти...")
                 try:
                     report_file = build_technadzor_remont_report_file()
-                    filename = f"remont_hisobot_{datetime.now(ZoneInfo('Asia/Tashkent')).strftime('%Y_%m_%d_%H_%M')}.zip"
+                    filename = f"remont_hisobot_{datetime.now(ZoneInfo('Asia/Tashkent')).strftime('%Y_%m_%d_%H_%M')}.xlsx"
                     await update.message.reply_document(
                         document=InputFile(report_file, filename=filename),
                         filename=filename,
@@ -10138,7 +10084,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 wait_msg = await update.message.reply_text("⏳ Газ Excel ҳисоботи тайёрланяпти...")
                 try:
                     report_file = build_technadzor_gas_report_file()
-                    filename = f"gas_hisobot_{datetime.now(ZoneInfo('Asia/Tashkent')).strftime('%Y_%m_%d_%H_%M')}.zip"
+                    filename = f"gas_hisobot_{datetime.now(ZoneInfo('Asia/Tashkent')).strftime('%Y_%m_%d_%H_%M')}.xlsx"
                     await update.message.reply_document(
                         document=InputFile(report_file, filename=filename),
                         filename=filename,
@@ -10182,7 +10128,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 wait_msg = await update.message.reply_text("⏳ Дизел Excel ҳисоботи тайёрланяпти...")
                 try:
                     report_file = build_technadzor_diesel_report_file()
-                    filename = f"diesel_hisobot_{datetime.now(ZoneInfo('Asia/Tashkent')).strftime('%Y_%m_%d_%H_%M')}.zip"
+                    filename = f"diesel_hisobot_{datetime.now(ZoneInfo('Asia/Tashkent')).strftime('%Y_%m_%d_%H_%M')}.xlsx"
                     await update.message.reply_document(
                         document=InputFile(report_file, filename=filename),
                         filename=filename,
@@ -18034,16 +17980,387 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def test_backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тезкор backup test. Private ёки group'да ҳам ишлайди."""
-    try:
-        role = get_role(update)
+# ================= BOT3 v44 SAFE POSTGRES BACKUP / ZIP / TEST =================
+# Структура:
+# - 10% threshold: snapshot queue.
+# - 08:00: queued snapshot ZIP Excel backup yuboriladi.
+# - 40% va undan yuqori: delete old block'dan OLDIN FINAL backup qayta olinadi.
+# - Auto delete default OFF: BACKUP_AUTO_DELETE_ENABLED=true bo'lmaguncha hech narsa o'chmaydi.
+# - Test: /testbackup yoki "🧪 Backup test" tugmasi.
 
-        # Role аниқланмаса ҳам, тестни тўхтатмаймиз: фақат шахсий/админ текширув учун.
-        await update.message.reply_text(
-            "⏳ Backup test бошланди. ZIP файл тайёрланяпти...\n"
-            "Агар файл келмаса, Render logs'да BACKUP хатосини кўринг."
-        )
+BACKUP_BLOCK_PERCENT = 10
+BACKUP_DELETE_TRIGGER_PERCENT = 40
+BACKUP_DB_LIMIT_MB = float(os.getenv("BACKUP_DB_LIMIT_MB", "1024") or 1024)
+BACKUP_AUTO_DELETE_ENABLED = os.getenv("BACKUP_AUTO_DELETE_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def get_backup_receiver_ids(fallback_chat_id=None):
+    env_value = (os.getenv("BACKUP_RECEIVER_IDS") or "").strip()
+    result = []
+
+    if env_value:
+        for item in env_value.split(","):
+            item = item.strip()
+            if item.lstrip("-").isdigit():
+                result.append(int(item))
+
+    if result:
+        return sorted(set(result), key=lambda x: str(x))
+
+    # ENV бўлмаса, USERS ичидан director ва technadzor'ларга юборишга ҳаракат қиламиз.
+    try:
+        for user_id, info in USERS.items():
+            if (info or {}).get("role") in ["director", "technadzor"]:
+                try:
+                    result.append(int(user_id))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Test учун fallback: командани босган чатга юборилади.
+    if not result and fallback_chat_id is not None:
+        try:
+            result.append(int(fallback_chat_id))
+        except Exception:
+            result.append(fallback_chat_id)
+
+    return sorted(set(result), key=lambda x: str(x))
+
+
+def ensure_backup_tables():
+    if not DATABASE_URL:
+        return
+
+    with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
+        with raw_conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS bot_backup_jobs (
+                    id BIGSERIAL PRIMARY KEY,
+                    backup_date DATE DEFAULT CURRENT_DATE,
+                    threshold_percent INTEGER,
+                    status TEXT DEFAULT 'queued',
+                    file_name TEXT,
+                    file_size BIGINT,
+                    sent_to TEXT,
+                    error TEXT,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    sent_at TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS bot_backup_jobs_unique_day_threshold
+                ON bot_backup_jobs (backup_date, threshold_percent)
+            """)
+        raw_conn.commit()
+
+
+def get_postgres_usage_percent():
+    """DB usage percent. Render limit aniq bo'lmasa BACKUP_DB_LIMIT_MB ENV orqali beriladi."""
+    if not DATABASE_URL:
+        return 0.0
+
+    try:
+        with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
+            with raw_conn.cursor() as cur:
+                cur.execute("SELECT pg_database_size(current_database())")
+                size_bytes = int((cur.fetchone() or [0])[0] or 0)
+
+        limit_bytes = max(BACKUP_DB_LIMIT_MB, 1) * 1024 * 1024
+        return round((size_bytes / limit_bytes) * 100, 2)
+
+    except Exception as e:
+        print("BACKUP USAGE CHECK ERROR:", e)
+        return 0.0
+
+
+def backup_threshold_from_usage(usage_percent):
+    try:
+        value = float(usage_percent or 0)
+        if value < BACKUP_BLOCK_PERCENT:
+            return 0
+        return int(value // BACKUP_BLOCK_PERCENT) * BACKUP_BLOCK_PERCENT
+    except Exception:
+        return 0
+
+
+def queue_backup_if_needed():
+    """10/20/30/40... threshold bo'lsa queue qiladi. Shu kuni shu threshold takrorlanmaydi."""
+    try:
+        ensure_backup_tables()
+        usage = get_postgres_usage_percent()
+        threshold = backup_threshold_from_usage(usage)
+
+        if threshold < BACKUP_BLOCK_PERCENT:
+            return
+
+        with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
+            with raw_conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO bot_backup_jobs (backup_date, threshold_percent, status)
+                    VALUES (CURRENT_DATE, %s, 'queued')
+                    ON CONFLICT (backup_date, threshold_percent) DO NOTHING
+                """, (threshold,))
+            raw_conn.commit()
+
+        print(f"BACKUP QUEUED CHECK: usage={usage}% threshold={threshold}%")
+
+    except Exception as e:
+        print("BACKUP QUEUE ERROR:", e)
+
+
+def list_public_tables(cur):
+    cur.execute("""
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_type = 'BASE TABLE'
+        ORDER BY table_name
+    """)
+    return [r[0] for r in cur.fetchall()]
+
+
+def safe_sheet_name(name, used):
+    cleaned = re.sub(r'[\[\]\:\*\?\/\\]', "_", str(name or "sheet"))[:31] or "sheet"
+    base = cleaned
+    i = 1
+    while cleaned in used:
+        suffix = f"_{i}"
+        cleaned = (base[:31-len(suffix)] + suffix)[:31]
+        i += 1
+    used.add(cleaned)
+    return cleaned
+
+
+def build_postgres_backup_xlsx():
+    """Барча public table'лар Excel workbook'га алоҳида sheet бўлиб тушади."""
+    output = io.BytesIO()
+    wb = Workbook(write_only=True)
+
+    if not DATABASE_URL:
+        ws = wb.create_sheet("ERROR")
+        ws.append(["DATABASE_URL топилмади"])
+        wb.save(output)
+        output.seek(0)
+        return output
+
+    used_sheet_names = set()
+
+    with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
+        with raw_conn.cursor() as cur:
+            tables = list_public_tables(cur)
+
+            if not tables:
+                ws = wb.create_sheet("EMPTY")
+                ws.append(["Public table топилмади"])
+
+            for table in tables:
+                ws = wb.create_sheet(safe_sheet_name(table, used_sheet_names))
+
+                try:
+                    cur.execute(f'SELECT * FROM "{table}"')
+                    headers = [d[0] for d in cur.description]
+                    ws.append(headers)
+
+                    fetch_size = 1000
+                    while True:
+                        rows = cur.fetchmany(fetch_size)
+                        if not rows:
+                            break
+                        for row in rows:
+                            cleaned = []
+                            for value in row:
+                                if isinstance(value, (datetime,)):
+                                    cleaned.append(value.strftime("%Y-%m-%d %H:%M:%S"))
+                                else:
+                                    cleaned.append(value)
+                            ws.append(cleaned)
+
+                except Exception as e:
+                    ws.append(["TABLE BACKUP ERROR", str(e)])
+
+    wb.save(output)
+    output.seek(0)
+    return output
+
+
+def build_postgres_backup_zip(final_backup=False):
+    xlsx_io = build_postgres_backup_xlsx()
+    zip_io = io.BytesIO()
+    now = datetime.now(TASHKENT_TZ)
+    prefix = "FINAL" if final_backup else "SNAPSHOT"
+    xlsx_name = f"BOT3_{prefix}_PostgreSQL_backup_{now.strftime('%Y_%m_%d_%H_%M')}.xlsx"
+
+    with zipfile.ZipFile(zip_io, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        xlsx_io.seek(0)
+        zf.writestr(xlsx_name, xlsx_io.getvalue())
+
+    zip_io.seek(0)
+    return zip_io
+
+
+async def send_postgres_backup_file(bot, job_id=None, final_backup=False, fallback_chat_id=None):
+    receivers = get_backup_receiver_ids(fallback_chat_id=fallback_chat_id)
+
+    if not receivers:
+        print("BACKUP SEND SKIPPED: receiver yo'q")
+        return False
+
+    now = datetime.now(TASHKENT_TZ)
+    prefix = "FINAL" if final_backup else "SNAPSHOT"
+    file_name = f"BOT3_{prefix}_PostgreSQL_backup_{now.strftime('%Y_%m_%d_%H_%M')}.zip"
+
+    try:
+        zip_io = build_postgres_backup_zip(final_backup=final_backup)
+        file_size = len(zip_io.getvalue())
+    except Exception as e:
+        print("BACKUP BUILD ERROR:", e)
+        if job_id:
+            update_backup_job_error(job_id, f"build_error: {e}")
+        return False
+
+    sent_to = []
+
+    for chat_id in receivers:
+        try:
+            zip_io.seek(0)
+            await bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(zip_io, filename=file_name),
+                caption=(
+                    f"✅ {prefix} PostgreSQL ZIP backup\n\n"
+                    f"🕒 Сана: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"📦 Формат: ZIP ichida Excel\n"
+                    f"📌 Барча public PostgreSQL table'лар алоҳида sheet."
+                )
+            )
+            sent_to.append(str(chat_id))
+        except Exception as e:
+            print(f"BACKUP SEND ERROR TO {chat_id}:", e)
+
+    if job_id:
+        try:
+            with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
+                with raw_conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE bot_backup_jobs
+                        SET status = %s,
+                            file_name = %s,
+                            file_size = %s,
+                            sent_to = %s,
+                            sent_at = NOW(),
+                            error = NULL
+                        WHERE id = %s
+                    """, (
+                        "final_sent" if final_backup and sent_to else ("sent" if sent_to else "send_failed"),
+                        file_name,
+                        file_size,
+                        ",".join(sent_to),
+                        job_id
+                    ))
+                raw_conn.commit()
+        except Exception as e:
+            print("BACKUP JOB UPDATE ERROR:", e)
+
+    return bool(sent_to)
+
+
+def update_backup_job_error(job_id, error_text):
+    try:
+        with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
+            with raw_conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE bot_backup_jobs
+                    SET status = 'error',
+                        error = %s
+                    WHERE id = %s
+                """, (str(error_text)[:1000], job_id))
+            raw_conn.commit()
+    except Exception as e:
+        print("BACKUP JOB ERROR UPDATE ERROR:", e)
+
+
+def safe_archive_delete_old_rows_if_enabled():
+    """
+    Хавфсизлик учун default ҳолатда delete йўқ.
+    BACKUP_AUTO_DELETE_ENABLED=true бўлса ҳам бу жойда фақат log.
+    Реал ўчириш алоҳида table whitelist ва FINAL backup тасдиғи билан кейин қўшилади.
+    """
+    if not BACKUP_AUTO_DELETE_ENABLED:
+        print("FIFO DELETE SKIPPED: BACKUP_AUTO_DELETE_ENABLED=false")
+        return False
+
+    print("FIFO DELETE REQUESTED, BUT REAL DELETE IS DISABLED FOR SAFETY.")
+    return False
+
+
+async def finalize_queued_backups(bot):
+    """
+    08:00 да queued snapshot backup'ни юборади.
+    40%+ бўлса, delete олдидан FINAL backup ҳам қайта олинади.
+    """
+    try:
+        ensure_backup_tables()
+
+        with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
+            with raw_conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, threshold_percent
+                    FROM bot_backup_jobs
+                    WHERE status = 'queued'
+                    ORDER BY backup_date ASC, threshold_percent ASC
+                    LIMIT 1
+                """)
+                row = cur.fetchone()
+
+        if not row:
+            return
+
+        job_id, threshold_percent = row
+
+        snapshot_ok = await send_postgres_backup_file(bot, job_id=job_id, final_backup=False)
+
+        if not snapshot_ok:
+            print("BACKUP SNAPSHOT FAILED")
+            return
+
+        if int(threshold_percent or 0) >= BACKUP_DELETE_TRIGGER_PERCENT:
+            final_ok = await send_postgres_backup_file(bot, job_id=job_id, final_backup=True)
+
+            if not final_ok:
+                print("FINAL BACKUP FAILED: delete skipped")
+                return
+
+            safe_archive_delete_old_rows_if_enabled()
+
+    except Exception as e:
+        print("FINALIZE BACKUP ERROR:", e)
+
+
+async def postgres_backup_monitor_loop(bot):
+    """Ҳар 1 соатда DB usage текширади; 08:00 да queued backup'ларни юборади."""
+    last_finalize_date = None
+
+    while True:
+        try:
+            queue_backup_if_needed()
+
+            now = datetime.now(TASHKENT_TZ)
+
+            if now.hour == 8 and now.minute < 5 and last_finalize_date != now.date():
+                last_finalize_date = now.date()
+                await finalize_queued_backups(bot)
+
+        except Exception as e:
+            print("POSTGRES BACKUP LOOP ERROR:", e)
+
+        await asyncio.sleep(3600)
+
+
+async def test_backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Private/group/text fallback orqali tezkor backup test."""
+    try:
+        await update.message.reply_text("⏳ Backup test қабул қилинди. ZIP файл тайёрланяпти...")
 
         ok = await send_postgres_backup_file(
             context.bot,
@@ -18057,18 +18374,17 @@ async def test_backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             await update.message.reply_text(
                 "❌ Backup юборилмади.\n"
-                "Сабаблар: DATABASE_URL, PostgreSQL connection ёки Telegram file send хатоси.\n"
-                "Render logs'да BACKUP SEND ERROR / TEST BACKUP COMMAND ERROR ни текширинг."
+                "Render logs'да BACKUP BUILD ERROR ёки BACKUP SEND ERROR ни текширинг."
             )
 
     except Exception as e:
         print("TEST BACKUP COMMAND ERROR:", e)
         try:
-            await update.message.reply_text(
-                f"❌ Backup test вақтида хато бўлди:\n{e}"
-            )
+            await update.message.reply_text(f"❌ Backup test хатоси:\n{e}")
         except Exception:
             pass
+
+# ================= BOT3 v44 BACKUP END =================
 
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """V20: callback/message ичида хато чиқса, бот тўхтамасин ва Render log'да аниқ кўринсин."""
@@ -18107,356 +18423,6 @@ app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
 app.add_handler(MessageHandler(filters.VIDEO_NOTE | filters.VIDEO, handle_video))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-
-
-
-# === BOT3 v36: SAFE POSTGRES BACKUP / ARCHIVE FUNCTIONS ===
-# ENV:
-# POSTGRES_MAX_BYTES=1073741824          # DB лимит, default 1GB
-# BACKUP_RECEIVER_IDS=492894595,492894594 # Кимга backup файл юборилади
-# ENABLE_DB_ARCHIVE_DELETE=false         # true бўлмагунча DBдан ҳеч нарса ўчирилмайди
-
-def get_backup_receiver_ids(fallback_chat_id=None):
-    env_value = (os.getenv("BACKUP_RECEIVER_IDS") or "").strip()
-    result = []
-
-    if env_value:
-        for item in env_value.split(","):
-            item = item.strip()
-            if item.lstrip("-").isdigit():
-                result.append(int(item))
-
-    if result:
-        return sorted(set(result))
-
-    # ENV бўлмаса, USERS ичидан director ва technadzor'ларга юборамиз.
-    try:
-        for user_id, info in USERS.items():
-            if (info or {}).get("role") in ["director", "technadzor"]:
-                try:
-                    result.append(int(user_id))
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
-    # Тест учун: BACKUP_RECEIVER_IDS бўлмаса, командани ёзган чатга юборамиз.
-    if not result and fallback_chat_id is not None:
-        try:
-            result.append(int(fallback_chat_id))
-        except Exception:
-            result.append(fallback_chat_id)
-
-    return sorted(set(result), key=lambda x: str(x))
-
-
-def get_database_usage_percent():
-    try:
-        max_bytes = int(os.getenv("POSTGRES_MAX_BYTES", "1073741824"))  # 1GB default
-        if max_bytes <= 0:
-            max_bytes = 1073741824
-
-        with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
-            with raw_conn.cursor() as cur:
-                cur.execute("SELECT pg_database_size(current_database())")
-                used_bytes = int(cur.fetchone()[0] or 0)
-
-        return round((used_bytes / max_bytes) * 100, 2), used_bytes, max_bytes
-
-    except Exception as e:
-        print("DB USAGE CHECK ERROR:", e)
-        return 0, 0, 0
-
-
-BACKUP_DELETE_TRIGGER_PERCENT = 40
-
-BACKUP_BLOCK_PERCENT = 10
-BACKUP_DELETE_TRIGGER_PERCENT = 40
-
-def backup_threshold_from_usage(usage_percent):
-    try:
-        value = float(usage_percent or 0)
-        if value < BACKUP_BLOCK_PERCENT:
-            return 0
-        # 10, 20, 30, 40, 50 ...
-        return int(value // BACKUP_BLOCK_PERCENT) * BACKUP_BLOCK_PERCENT
-    except Exception:
-        return 0
-
-
-def queue_backup_if_needed():
-    usage_percent, used_bytes, max_bytes = get_database_usage_percent()
-    threshold = backup_threshold_from_usage(usage_percent)
-
-    if threshold < BACKUP_BLOCK_PERCENT:
-        return
-
-    backup_date = datetime.now(TASHKENT_TZ).date()
-
-    try:
-        with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
-            with raw_conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO bot_backup_jobs (
-                        backup_date,
-                        threshold_percent,
-                        usage_percent,
-                        status
-                    )
-                    VALUES (%s, %s, %s, 'queued')
-                    ON CONFLICT (backup_date, threshold_percent)
-                    DO NOTHING
-                """, (backup_date, threshold, usage_percent))
-            raw_conn.commit()
-
-        print(f"BACKUP QUEUE CHECK: usage={usage_percent}% threshold={threshold}%")
-
-    except Exception as e:
-        print("BACKUP QUEUE ERROR:", e)
-
-
-def excel_safe_sheet_name(name):
-    value = re.sub(r'[\[\]\:\*\?\/\\]', "_", str(name or "Sheet"))
-    value = value[:31].strip()
-    return value or "Sheet"
-
-
-def get_public_table_names(raw_conn):
-    with raw_conn.cursor() as cur:
-        cur.execute("""
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-              AND table_type = 'BASE TABLE'
-            ORDER BY table_name
-        """)
-        return [row[0] for row in cur.fetchall()]
-
-
-def build_postgres_backup_xlsx():
-    from openpyxl import Workbook
-
-    output = io.BytesIO()
-    wb = Workbook()
-    default_ws = wb.active
-    default_ws.title = "Backup info"
-
-    now = datetime.now(TASHKENT_TZ)
-    usage_percent, used_bytes, max_bytes = get_database_usage_percent()
-
-    default_ws.append(["Backup created", now.strftime("%Y-%m-%d %H:%M:%S")])
-    default_ws.append(["Database used bytes", used_bytes])
-    default_ws.append(["Database max bytes", max_bytes])
-    default_ws.append(["Database usage percent", usage_percent])
-    default_ws.append([])
-    default_ws.append(["Each PostgreSQL table is exported into a separate sheet."])
-
-    with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
-        table_names = get_public_table_names(raw_conn)
-
-        for table_name in table_names:
-            ws = wb.create_sheet(excel_safe_sheet_name(table_name))
-
-            with raw_conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_schema = 'public'
-                      AND table_name = %s
-                    ORDER BY ordinal_position
-                    """,
-                    (table_name,)
-                )
-                columns = [row[0] for row in cur.fetchall()]
-                ws.append(columns)
-
-                # Safe quoting for table names from information_schema
-                quoted_table = '"' + table_name.replace('"', '""') + '"'
-                cur.execute(f"SELECT * FROM {quoted_table}")
-
-                while True:
-                    rows = cur.fetchmany(500)
-                    if not rows:
-                        break
-
-                    for row in rows:
-                        clean_row = []
-                        for value in row:
-                            if isinstance(value, datetime):
-                                clean_row.append(value.strftime("%Y-%m-%d %H:%M:%S"))
-                            else:
-                                clean_row.append(value)
-                        ws.append(clean_row)
-
-    wb.save(output)
-    output.seek(0)
-    return output
-
-
-def build_postgres_backup_zip():
-    """PostgreSQL backup Excel'ni ZIP қилиб BytesIO кўринишида қайтаради."""
-    zip_output = io.BytesIO()
-    xlsx_io = build_postgres_backup_xlsx()
-
-    now = datetime.now(TASHKENT_TZ)
-    xlsx_name = f"BOT3_PostgreSQL_backup_{now.strftime('%Y_%m_%d_%H_%M')}.xlsx"
-
-    with zipfile.ZipFile(zip_output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        xlsx_io.seek(0)
-        zf.writestr(xlsx_name, xlsx_io.getvalue())
-
-    zip_output.seek(0)
-    return zip_output
-
-
-async def send_postgres_backup_file(bot, job_id=None, final_backup=False, fallback_chat_id=None):
-    receivers = get_backup_receiver_ids(fallback_chat_id=fallback_chat_id)
-
-    if not receivers:
-        print("BACKUP SEND SKIPPED: receivers not configured")
-        return False
-
-    now = datetime.now(TASHKENT_TZ)
-    file_name = (
-        f"BOT3_FINAL_PostgreSQL_backup_{now.strftime('%Y_%m_%d_%H_%M')}.zip"
-        if final_backup
-        else f"BOT3_SNAPSHOT_PostgreSQL_backup_{now.strftime('%Y_%m_%d_%H_%M')}.zip"
-    )
-
-    zip_io = build_postgres_backup_zip()
-    file_size = len(zip_io.getvalue())
-
-    sent_to = []
-
-    for chat_id in receivers:
-        try:
-            zip_io.seek(0)
-            await bot.send_document(
-                chat_id=chat_id,
-                document=InputFile(zip_io, filename=file_name),
-                caption=(
-                    ("✅ FINAL PostgreSQL backup\n\n" if final_backup else "✅ SNAPSHOT PostgreSQL backup\n\n")
-                    + f"🕒 Сана: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    + "📌 Барча таблицалар алоҳида Excel sheet қилиб ZIP ичида сақланди."
-                )
-            )
-            sent_to.append(str(chat_id))
-        except Exception as e:
-            print(f"BACKUP SEND ERROR TO {chat_id}:", e)
-
-    if job_id:
-        try:
-            with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
-                with raw_conn.cursor() as cur:
-                    cur.execute("""
-                        UPDATE bot_backup_jobs
-                        SET status = %s,
-                            file_name = %s,
-                            file_size = %s,
-                            sent_to = %s,
-                            created_at = NOW(),
-                            sent_at = NOW(),
-                            error = NULL
-                        WHERE id = %s
-                    """, (
-                        "final_sent" if final_backup and sent_to else ("sent" if sent_to else "send_failed"),
-                        file_name,
-                        file_size,
-                        ",".join(sent_to),
-                        job_id
-                    ))
-                raw_conn.commit()
-        except Exception as e:
-            print("BACKUP JOB UPDATE ERROR:", e)
-
-    return bool(sent_to)
-
-
-async def finalize_queued_backups(bot):
-    """
-    08:00 да queued snapshot backup'ни юборади.
-    Агар DB 40% ёки ундан юқори бўлса, delete олдидан FINAL backup ҳам қайта юборилади.
-    Автомат delete default ҳолатда ўчирилган.
-    """
-    try:
-        with psycopg2.connect(DATABASE_URL, options="-c timezone=Asia/Tashkent") as raw_conn:
-            with raw_conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, threshold_percent
-                    FROM bot_backup_jobs
-                    WHERE status = 'queued'
-                    ORDER BY backup_date ASC, threshold_percent ASC
-                    LIMIT 1
-                """)
-                row = cur.fetchone()
-
-        if not row:
-            return
-
-        job_id, threshold_percent = row
-
-        snapshot_ok = await send_postgres_backup_file(bot, job_id=job_id, final_backup=False)
-
-        if not snapshot_ok:
-            print("BACKUP SNAPSHOT FAILED: final/fifo skipped")
-            return
-
-        # 40% га етганда FIFO delete олдидан FINAL backup қилинади.
-        if int(threshold_percent or 0) >= BACKUP_DELETE_TRIGGER_PERCENT:
-            final_ok = await send_postgres_backup_file(bot, job_id=job_id, final_backup=True)
-
-            if not final_ok:
-                print("FINAL BACKUP FAILED: delete skipped")
-                return
-
-            # Delete ҳозирча default OFF. Хавфсизлик учун фақат ENV true бўлса ишлайди.
-            safe_archive_delete_old_rows_if_enabled()
-
-    except Exception as e:
-        print("FINALIZE QUEUED BACKUP ERROR:", e)
-
-
-async def postgres_backup_monitor_loop(bot):
-    """
-    Хавфсиз backup loop:
-    - ҳар 1 соатда DB usage текширади ва 10/20/30/40... threshold бўлса queue қилади;
-    - ҳар куни 08:00 да queued backup'ни Excel қилиб юборади.
-    """
-    while True:
-        try:
-            queue_backup_if_needed()
-
-            now = datetime.now(TASHKENT_TZ)
-            target = now.replace(hour=8, minute=0, second=0, microsecond=0)
-
-            if now >= target:
-                target = target + timedelta(days=1)
-
-            # Бир соатда камида бир марта usage текшириш учун target'гача тўлиқ ухламаймиз.
-            sleep_seconds = min(3600, max(60, (target - now).total_seconds()))
-
-            # Агар ҳозир 08:00 атрофида бўлса, queued backup'ни finalize қиламиз.
-            if now.hour == 8 and now.minute <= 5:
-                await finalize_queued_backups(bot)
-
-            await asyncio.sleep(sleep_seconds)
-
-        except Exception as e:
-            print("POSTGRES BACKUP LOOP ERROR:", e)
-            await asyncio.sleep(3600)
-
-
-def safe_archive_delete_old_rows_if_enabled():
-    """
-    Ҳозирча хавфсизлик учун автомат ўчириш ўчирилган.
-    Фақат ENABLE_DB_ARCHIVE_DELETE=true бўлса ва backup_jobs.status='sent'
-    бўлганидан кейин алоҳида delete policy қўшилади.
-    """
-    if (os.getenv("ENABLE_DB_ARCHIVE_DELETE") or "").lower() != "true":
-        return False
-    print("ARCHIVE DELETE ENABLED, but deletion policy is intentionally not active yet.")
-    return False
 
 
 # === MONTHLY PUTEVKA POLL REMINDER ===
@@ -18554,9 +18520,7 @@ async def main():
     # ҳар куни 08:00 да гуруҳга хабар + голосование юборади.
     asyncio.create_task(putevka_monthly_loop(app.bot))
 
-    # BOT3 v36: Хавфсиз PostgreSQL backup/archive monitor.
-    # 10/20/30/40... threshold'ларда backup навбатга қўйилади,
-    # эрталаб 08:00 да Excel файл қилиб director/technadzor'ларга юборилади.
+    # BOT3 v44: PostgreSQL 10% ZIP backup monitor.
     asyncio.create_task(postgres_backup_monitor_loop(app.bot))
 
     await app.bot.set_webhook(
@@ -18596,34 +18560,3 @@ DEEP_LINK_ENABLED = True
 
 
 # TECHNADZOR AUTO ZAPRAVKA INFO ENABLED
-
-
-# === FINAL SNAPSHOT FIFO BACKUP SYSTEM ===
-# BOT3 v38
-# 10% snapshot backup -> FINAL backup before delete.
-#
-# Structure:
-# 0-10%   -> snapshot backup
-# 10-20%  -> snapshot backup
-# 20-30%  -> snapshot backup
-# 30-40%  -> snapshot backup
-#
-# When DB reaches 40%:
-# 1. Latest 10% block is archived and sent.
-# 2. BEFORE deleting oldest 0-10% block:
-#    FINAL backup is recreated from current DB state.
-# 3. FINAL ZIP backup is sent to checker/admin.
-# 4. Only after successful send:
-#    oldest block may be deleted (FIFO).
-#
-# This protects:
-# - pending -> approved status changes
-# - edited records
-# - audit consistency
-# - restore accuracy
-
-FINAL_BACKUP_ENABLED = True
-FINAL_BACKUP_FIFO_MODE = True
-FINAL_BACKUP_BEFORE_DELETE = True
-BACKUP_BLOCK_PERCENT = 10
-
