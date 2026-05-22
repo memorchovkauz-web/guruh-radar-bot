@@ -2378,18 +2378,8 @@ def technadzor_staff_count(work_role=None):
 
 
 def technadzor_keyboard():
-    total_notifications = (
-        pending_registration_count()
-        + pending_repair_exit_count()
-        + pending_diesel_prihod_count()
-    )
-
-    notification_text = (
-        f"🔔 Уведомления [ {total_notifications} ]"
-        if total_notifications > 0
-        else "🔔 Уведомления"
-    )
-
+    total_notifications = pending_registration_count() + pending_repair_exit_count() + pending_diesel_prihod_count()
+    notification_text = f"🔔 Уведомления [ {total_notifications} ]" if total_notifications > 0 else "🔔 Уведомления"
     staff_total = technadzor_staff_count()
 
     return ReplyKeyboardMarkup([
@@ -9035,8 +9025,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_duplicate_text_button(context, text):
         return
 
-    # === BOT3 v44: backup test command/button priority ===
-    if text.split()[0].lower() == "/testbackup" or text in ["🧪 Backup test", "Backup test"]:
+    # === BOT3 v47: backup test priority ===
+    if text.split()[0].lower().startswith("/testbackup") or text in ["🧪 Backup test", "Backup test"]:
         await test_backup_command(update, context)
         return
 
@@ -17988,13 +17978,17 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-# ================= BOT3 v44 SAFE POSTGRES BACKUP / ZIP / TEST =================
-# Структура:
-# - 10% threshold: snapshot queue.
-# - 08:00: queued snapshot ZIP Excel backup yuboriladi.
-# - 40% va undan yuqori: delete old block'dan OLDIN FINAL backup qayta olinadi.
-# - Auto delete default OFF: BACKUP_AUTO_DELETE_ENABLED=true bo'lmaguncha hech narsa o'chmaydi.
-# - Test: /testbackup yoki "🧪 Backup test" tugmasi.
+# ================= BOT3 v47 CLEAN SAFE BACKUP SYSTEM =================
+# Stable base: v35
+# Test:
+#   1) /testbackup
+#   2) Tekshiruvchi asosий менюсида "🧪 Backup test"
+#
+# Production:
+#   - DB usage ҳар 10% threshold бўлганда queue.
+#   - Ҳар куни 08:00 да snapshot ZIP backup юборилади.
+#   - 40%+ бўлса, ўчиришдан олдин FINAL ZIP backup қайта олинади.
+#   - AUTO DELETE ҳозирча хавфсизлик учун OFF.
 
 BACKUP_BLOCK_PERCENT = 10
 BACKUP_DELETE_TRIGGER_PERCENT = 40
@@ -18015,18 +18009,13 @@ def get_backup_receiver_ids(fallback_chat_id=None):
     if result:
         return sorted(set(result), key=lambda x: str(x))
 
-    # ENV бўлмаса, USERS ичидан director ва technadzor'ларга юборишга ҳаракат қиламиз.
     try:
         for user_id, info in USERS.items():
             if (info or {}).get("role") in ["director", "technadzor"]:
-                try:
-                    result.append(int(user_id))
-                except Exception:
-                    pass
+                result.append(int(user_id))
     except Exception:
         pass
 
-    # Test учун fallback: командани босган чатга юборилади.
     if not result and fallback_chat_id is not None:
         try:
             result.append(int(fallback_chat_id))
@@ -18064,7 +18053,6 @@ def ensure_backup_tables():
 
 
 def get_postgres_usage_percent():
-    """DB usage percent. Render limit aniq bo'lmasa BACKUP_DB_LIMIT_MB ENV orqali beriladi."""
     if not DATABASE_URL:
         return 0.0
 
@@ -18076,7 +18064,6 @@ def get_postgres_usage_percent():
 
         limit_bytes = max(BACKUP_DB_LIMIT_MB, 1) * 1024 * 1024
         return round((size_bytes / limit_bytes) * 100, 2)
-
     except Exception as e:
         print("BACKUP USAGE CHECK ERROR:", e)
         return 0.0
@@ -18093,7 +18080,6 @@ def backup_threshold_from_usage(usage_percent):
 
 
 def queue_backup_if_needed():
-    """10/20/30/40... threshold bo'lsa queue qiladi. Shu kuni shu threshold takrorlanmaydi."""
     try:
         ensure_backup_tables()
         usage = get_postgres_usage_percent()
@@ -18111,7 +18097,7 @@ def queue_backup_if_needed():
                 """, (threshold,))
             raw_conn.commit()
 
-        print(f"BACKUP QUEUED CHECK: usage={usage}% threshold={threshold}%")
+        print(f"BACKUP QUEUE CHECK: usage={usage}% threshold={threshold}%")
 
     except Exception as e:
         print("BACKUP QUEUE ERROR:", e)
@@ -18141,7 +18127,6 @@ def safe_sheet_name(name, used):
 
 
 def build_postgres_backup_xlsx():
-    """Барча public table'лар Excel workbook'га алоҳида sheet бўлиб тушади."""
     output = io.BytesIO()
     wb = Workbook(write_only=True)
 
@@ -18170,15 +18155,15 @@ def build_postgres_backup_xlsx():
                     headers = [d[0] for d in cur.description]
                     ws.append(headers)
 
-                    fetch_size = 1000
                     while True:
-                        rows = cur.fetchmany(fetch_size)
+                        rows = cur.fetchmany(1000)
                         if not rows:
                             break
+
                         for row in rows:
                             cleaned = []
                             for value in row:
-                                if isinstance(value, (datetime,)):
+                                if isinstance(value, datetime):
                                     cleaned.append(value.strftime("%Y-%m-%d %H:%M:%S"))
                                 else:
                                     cleaned.append(value)
@@ -18238,7 +18223,7 @@ async def send_postgres_backup_file(bot, job_id=None, final_backup=False, fallba
                 caption=(
                     f"✅ {prefix} PostgreSQL ZIP backup\n\n"
                     f"🕒 Сана: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    f"📦 Формат: ZIP ichida Excel\n"
+                    f"📦 Формат: ZIP ичида Excel\n"
                     f"📌 Барча public PostgreSQL table'лар алоҳида sheet."
                 )
             )
@@ -18289,24 +18274,17 @@ def update_backup_job_error(job_id, error_text):
 
 
 def safe_archive_delete_old_rows_if_enabled():
-    """
-    Хавфсизлик учун default ҳолатда delete йўқ.
-    BACKUP_AUTO_DELETE_ENABLED=true бўлса ҳам бу жойда фақат log.
-    Реал ўчириш алоҳида table whitelist ва FINAL backup тасдиғи билан кейин қўшилади.
-    """
     if not BACKUP_AUTO_DELETE_ENABLED:
         print("FIFO DELETE SKIPPED: BACKUP_AUTO_DELETE_ENABLED=false")
         return False
 
+    # Ҳозирча реал DELETE йўқ. FINAL backup ишончли бўлганидан кейин
+    # table whitelist билан алоҳида қўшилади.
     print("FIFO DELETE REQUESTED, BUT REAL DELETE IS DISABLED FOR SAFETY.")
     return False
 
 
 async def finalize_queued_backups(bot):
-    """
-    08:00 да queued snapshot backup'ни юборади.
-    40%+ бўлса, delete олдидан FINAL backup ҳам қайта олинади.
-    """
     try:
         ensure_backup_tables()
 
@@ -18346,7 +18324,6 @@ async def finalize_queued_backups(bot):
 
 
 async def postgres_backup_monitor_loop(bot):
-    """Ҳар 1 соатда DB usage текширади; 08:00 да queued backup'ларни юборади."""
     last_finalize_date = None
 
     while True:
@@ -18354,7 +18331,6 @@ async def postgres_backup_monitor_loop(bot):
             queue_backup_if_needed()
 
             now = datetime.now(TASHKENT_TZ)
-
             if now.hour == 8 and now.minute < 5 and last_finalize_date != now.date():
                 last_finalize_date = now.date()
                 await finalize_queued_backups(bot)
@@ -18366,9 +18342,8 @@ async def postgres_backup_monitor_loop(bot):
 
 
 async def test_backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Private/group/text fallback orqali tezkor backup test."""
     try:
-        await update.message.reply_text("⏳ Backup test қабул қилинди. ZIP файл тайёрланяпти...")
+        await update.effective_message.reply_text("⏳ Backup test қабул қилинди. ZIP файл тайёрланяпти...")
 
         ok = await send_postgres_backup_file(
             context.bot,
@@ -18378,9 +18353,9 @@ async def test_backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
         if ok:
-            await update.message.reply_text("✅ Backup test муваффақиятли юборилди.")
+            await update.effective_message.reply_text("✅ Backup test муваффақиятли юборилди.")
         else:
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 "❌ Backup юборилмади.\n"
                 "Render logs'да BACKUP BUILD ERROR ёки BACKUP SEND ERROR ни текширинг."
             )
@@ -18388,11 +18363,11 @@ async def test_backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         print("TEST BACKUP COMMAND ERROR:", e)
         try:
-            await update.message.reply_text(f"❌ Backup test хатоси:\n{e}")
+            await update.effective_message.reply_text(f"❌ Backup test хатоси:\n{e}")
         except Exception:
             pass
 
-# ================= BOT3 v44 BACKUP END =================
+# ================= BOT3 v47 BACKUP END =================
 
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """V20: callback/message ичида хато чиқса, бот тўхтамасин ва Render log'да аниқ кўринсин."""
@@ -18411,6 +18386,7 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_error_handler(global_error_handler)
 
+app.add_handler(MessageHandler(filters.Regex(r"^/testbackup(?:@\\w+)?(?:\\s|$)"), test_backup_command), group=-3)
 app.add_handler(CommandHandler("start", start, filters.ChatType.PRIVATE))
 app.add_handler(CommandHandler("clear", clear_chat, filters.ChatType.PRIVATE))
 app.add_handler(CommandHandler("id", get_id, filters.ChatType.PRIVATE))
@@ -18528,7 +18504,7 @@ async def main():
     # ҳар куни 08:00 да гуруҳга хабар + голосование юборади.
     asyncio.create_task(putevka_monthly_loop(app.bot))
 
-    # BOT3 v44: PostgreSQL 10% ZIP backup monitor.
+    # BOT3 v47: PostgreSQL 10% ZIP backup monitor.
     asyncio.create_task(postgres_backup_monitor_loop(app.bot))
 
     await app.bot.set_webhook(
